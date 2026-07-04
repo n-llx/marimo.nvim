@@ -1,0 +1,302 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>ipynb-run-nvim</title>
+<style>
+  :root {
+    /* Catppuccin Mocha — same palette as the Neovim colorscheme this pairs with. */
+    --base: #1e1e2e;
+    --mantle: #181825;
+    --crust: #11111b;
+    --surface0: #313244;
+    --surface1: #45475a;
+    --surface2: #585b70;
+    --text: #cdd6f4;
+    --subtext0: #a6adc8;
+    --overlay0: #6c7086;
+    --lavender: #b4befe;
+    --blue: #89b4fa;
+    --teal: #94e2d5;
+    --green: #a6e3a1;
+    --yellow: #f9e2af;
+    --red: #f38ba8;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--base);
+    color: var(--text);
+    font-family: -apple-system, "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+    margin: 0;
+    min-height: 100vh;
+  }
+
+  code, pre, .mono {
+    font-family: ui-monospace, "JetBrains Mono", "Cascadia Code", Menlo, monospace;
+  }
+
+  header {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.9rem 1.75rem;
+    background: color-mix(in srgb, var(--mantle) 92%, transparent);
+    backdrop-filter: blur(6px);
+    border-bottom: 1px solid var(--surface0);
+  }
+
+  header h1 {
+    font-size: 0.95rem;
+    font-weight: 600;
+    margin: 0;
+    color: var(--lavender);
+    letter-spacing: 0.01em;
+  }
+
+  .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--overlay0);
+    transition: background 0.2s ease;
+  }
+  .dot.live { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .dot.down { background: var(--red); box-shadow: 0 0 6px var(--red); }
+
+  #status-text {
+    font-size: 0.8rem;
+    color: var(--subtext0);
+  }
+
+  main {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 1.5rem 1.75rem 4rem;
+  }
+
+  #empty {
+    color: var(--overlay0);
+    text-align: center;
+    padding: 4rem 1rem;
+    font-size: 0.9rem;
+  }
+
+  .run {
+    background: var(--mantle);
+    border: 1px solid var(--surface0);
+    border-radius: 10px;
+    margin-bottom: 1.1rem;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+    animation: rise 0.25s ease;
+  }
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .run.errored { border-color: color-mix(in srgb, var(--red) 45%, var(--surface0)); }
+
+  .run-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.55rem 1rem;
+    background: var(--surface0);
+    font-size: 0.78rem;
+  }
+  .run-header .label {
+    color: var(--teal);
+    font-weight: 600;
+  }
+  .run-header .run-number {
+    color: var(--subtext0);
+    font-weight: 400;
+  }
+  .run-header .status {
+    color: var(--yellow);
+    font-size: 0.75rem;
+  }
+
+  .run-code {
+    margin: 0;
+    padding: 0.85rem 1rem;
+    white-space: pre-wrap;
+    background: var(--crust);
+    color: var(--text);
+    font-size: 0.87rem;
+    line-height: 1.5;
+  }
+
+  .run-output {
+    padding: 0.4rem 1rem 0.7rem;
+  }
+  .run-output:empty { display: none; }
+  .run-output pre {
+    margin: 0.4rem 0;
+    white-space: pre-wrap;
+    font-size: 0.87rem;
+    line-height: 1.5;
+  }
+
+  .stream-stderr { color: var(--red); }
+  .error {
+    color: var(--red);
+    background: color-mix(in srgb, var(--red) 8%, transparent);
+    border-left: 3px solid var(--red);
+    padding: 0.5rem 0.75rem !important;
+    border-radius: 4px;
+  }
+
+  .run-output img {
+    max-width: 100%;
+    border-radius: 6px;
+    margin-top: 0.3rem;
+  }
+  .run-output iframe {
+    width: 100%;
+    height: 460px;
+    border: 1px solid var(--surface0);
+    border-radius: 6px;
+    background: white;
+    margin-top: 0.3rem;
+  }
+</style>
+</head>
+<body>
+<header>
+  <span class="dot" id="conn-dot"></span>
+  <h1>ipynb-run-nvim</h1>
+  <span id="status-text">connecting…</span>
+</header>
+<main>
+  <div id="empty">Run a cell in Neovim (&lt;leader&gt;nr) to see it here.</div>
+  <div id="runs"></div>
+</main>
+<script>
+const runsEl = document.getElementById("runs");
+const emptyEl = document.getElementById("empty");
+const dotEl = document.getElementById("conn-dot");
+const statusEl = document.getElementById("status-text");
+const blocks = new Map(); // runId -> { root, outputEl, statusEl }
+
+function setConnection(state, text) {
+  dotEl.className = "dot " + state;
+  statusEl.textContent = text;
+}
+
+// Every run is a brand-new, permanent log entry — created once, never reused
+// or overwritten by a later run of the same cell. Newest goes on top, so the
+// most recent run is always the first thing visible without scrolling.
+function createBlock(runId, cellId, code, { scrollToTop = false } = {}) {
+  emptyEl.style.display = "none";
+
+  const root = document.createElement("div");
+  root.className = "run";
+  root.innerHTML = `
+    <div class="run-header">
+      <span><span class="label">Cell ${cellId}</span> <span class="run-number">· run #${runId}</span></span>
+      <span class="status"></span>
+    </div>
+    <pre class="run-code"></pre>
+    <div class="run-output"></div>
+  `;
+  root.querySelector(".run-code").textContent = code;
+  runsEl.insertBefore(root, runsEl.firstChild);
+  if (scrollToTop) {
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  const block = {
+    root,
+    outputEl: root.querySelector(".run-output"),
+    statusEl: root.querySelector(".status"),
+  };
+  blocks.set(runId, block);
+  return block;
+}
+
+function asText(data) {
+  return typeof data === "string" ? data : JSON.stringify(data, null, 2);
+}
+
+function appendOutput(block, out) {
+  if (out.kind === "stream" || out.kind === "error") {
+    const pre = document.createElement("pre");
+    pre.className = out.kind === "error" ? "error" : (out.stream === "stderr" ? "stream-stderr" : "");
+    pre.textContent = out.kind === "error"
+      ? `${out.ename}: ${out.evalue}\n${out.traceback}`
+      : out.text;
+    block.outputEl.appendChild(pre);
+    if (out.kind === "error") block.root.classList.add("errored");
+  } else if (out.kind === "result") {
+    if (out.mimetype === "text/html") {
+      const iframe = document.createElement("iframe");
+      iframe.sandbox = "allow-scripts";
+      iframe.srcdoc = asText(out.data);
+      block.outputEl.appendChild(iframe);
+    } else if (out.mimetype === "image/png" || out.mimetype === "image/svg+xml") {
+      const img = document.createElement("img");
+      img.src = out.mimetype === "image/png"
+        ? `data:image/png;base64,${out.data}`
+        : `data:image/svg+xml;utf8,${encodeURIComponent(out.data)}`;
+      block.outputEl.appendChild(img);
+    } else {
+      // Anything else (an unrecognized/raw mimetype): never hand a
+      // non-string object straight to .textContent, or it renders as the
+      // useless literal string "[object Object]".
+      const pre = document.createElement("pre");
+      pre.textContent = asText(out.data);
+      block.outputEl.appendChild(pre);
+    }
+  }
+}
+
+function connect() {
+  setConnection("", "connecting…");
+  const ws = new WebSocket(`ws://${location.host}/ws`);
+
+  ws.onopen = () => setConnection("live", "connected");
+
+  ws.onmessage = (ev) => {
+    const msg = JSON.parse(ev.data);
+
+    if (msg.type === "full_state") {
+      for (const run of msg.runs) {
+        const block = createBlock(run.runId, run.cellId, run.code);
+        for (const out of run.outputs) appendOutput(block, out);
+      }
+      return;
+    }
+
+    if (msg.type === "run_started") {
+      createBlock(msg.runId, msg.cellId, msg.code, { scrollToTop: true }).statusEl.textContent = "running…";
+      return;
+    }
+
+    const block = blocks.get(msg.runId);
+    if (!block) return;
+
+    if (msg.type === "output") {
+      appendOutput(block, msg);
+    } else if (msg.type === "run_finished") {
+      block.statusEl.textContent = "";
+    }
+  };
+
+  ws.onclose = () => {
+    setConnection("down", "disconnected — retrying…");
+    setTimeout(connect, 1000);
+  };
+}
+
+connect();
+</script>
+</body>
+</html>
