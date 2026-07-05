@@ -37,14 +37,24 @@ pyright auto-detects — not something this plugin manages.
 
 ## Prerequisites (one-time)
 
+**If you already use your own project venv** (`uv`, `poetry`, plain `venv` — doesn't
+matter which): just `pip install marimo` (or `uv add marimo`) into it. As long as
+that venv is activated in the shell Neovim was started from, `require("marimo-nvim")`
+finds `marimo` on `$PATH` automatically — no config needed. (Verified: it resolves
+whatever `marimo` is first on `$PATH` before falling back to the dedicated venv
+below, so an already-active project environment always wins.)
+
+**Otherwise**, set up a dedicated venv just for this plugin:
 ```bash
 sudo apt install python3-pip python3-venv
 python3 -m venv ~/.local/share/nvim/marimo-nvim/venv
 ~/.local/share/nvim/marimo-nvim/venv/bin/pip install marimo
 ```
 Add any library your notebooks actually `import` (pandas, plotly, matplotlib, ...)
-to this same venv, or to a separate project-local venv if you want pyright to
-resolve those imports too (see above).
+to whichever of these two venvs is actually in use, or to a separate project-local
+one if you want pyright to resolve those imports too (see above). You can also force
+a specific interpreter regardless of `$PATH`: `require("marimo-nvim").setup({
+marimo_bin = "/path/to/venv/bin/marimo" })`.
 
 **For saving to actually re-run affected cells** (rather than just marking them
 stale until you click "run" in marimo's own UI), add to the notebook project's

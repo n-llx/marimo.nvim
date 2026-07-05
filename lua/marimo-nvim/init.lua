@@ -14,13 +14,17 @@ M.servers = {}
 
 local opened_buffers = {}
 
--- port = 0 (default): marimo self-selects, starting at its own default
--- (2718) and auto-incrementing if that's taken — verified empirically, this
--- already behaves like "don't worry about collisions" without needing a
--- true OS-assigned ephemeral port. Set a fixed port for SSH tunneling to a
--- remote instance (see README).
 local config = {
+  -- 0 (default): marimo self-selects, starting at its own default (2718)
+  -- and auto-incrementing if that's taken — verified empirically, this
+  -- already behaves like "don't worry about collisions" without needing a
+  -- true OS-assigned ephemeral port. Set a fixed port for SSH tunneling to
+  -- a remote instance (see README).
   port = 0,
+  -- nil (default): resolved automatically, see marimo_bin() below. Set this
+  -- explicitly only if you want to override both the $PATH lookup and the
+  -- dedicated-venv fallback.
+  marimo_bin = nil,
 }
 
 local function is_ssh_session()
@@ -37,16 +41,37 @@ local function is_wsl()
   return content:lower():find("microsoft") ~= nil
 end
 
-local function venv_bin(name)
+local function dedicated_venv_bin(name)
   return vim.fn.stdpath("data") .. "/marimo-nvim/venv/bin/" .. name
 end
 
-local function notify_missing_venv()
+-- Resolution order: (1) an explicit require("marimo-nvim").setup({ marimo_bin
+-- = "..." }) override, (2) whatever "marimo" is already first on $PATH —
+-- this is what makes an already-activated project venv (uv, poetry, plain
+-- venv, doesn't matter) just work with zero config, since Neovim inherits
+-- the PATH of the shell it was started from, (3) the dedicated venv this
+-- plugin creates for people without their own project environment.
+local function marimo_bin()
+  if config.marimo_bin then
+    return config.marimo_bin
+  end
+  local on_path = vim.fn.exepath("marimo")
+  if on_path ~= "" then
+    return on_path
+  end
+  return dedicated_venv_bin("marimo")
+end
+
+local function notify_missing_marimo()
   vim.notify(
-    "marimo-nvim: marimo not found. Run this once in a terminal:\n"
+    "marimo-nvim: marimo not found on $PATH or in the dedicated venv.\n"
+      .. "If you have your own project venv (uv/poetry/plain venv), activate it\n"
+      .. "before starting Neovim and `pip install marimo` (or `uv add marimo`) into it —\n"
+      .. "no config needed, it'll be found on $PATH automatically.\n"
+      .. "Otherwise, set up a dedicated one:\n"
       .. "  sudo apt install python3-pip python3-venv\n"
       .. "  python3 -m venv " .. vim.fn.stdpath("data") .. "/marimo-nvim/venv\n"
-      .. "  " .. venv_bin("pip") .. " install marimo",
+      .. "  " .. dedicated_venv_bin("pip") .. " install marimo",
     vim.log.levels.ERROR
   )
 end
@@ -87,9 +112,9 @@ function M.launch()
     return
   end
 
-  local marimo = venv_bin("marimo")
+  local marimo = marimo_bin()
   if vim.fn.filereadable(marimo) == 0 then
-    notify_missing_venv()
+    notify_missing_marimo()
     return
   end
 
